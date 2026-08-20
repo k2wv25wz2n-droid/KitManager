@@ -1,0 +1,566 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>⚽ KitManager</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body>
+  <div id="app"></div>
+
+  <script>
+    class KitManager {
+      constructor() {
+        this.players = this.load('players') || this.getDefaultPlayers();
+        this.pantSizes = this.load('pantSizes') || ['S', 'M', 'L', 'XL'];
+        this.socksSizes = this.load('socksSizes') || ['41-44', '45-47'];
+        this.jerseySizes = this.load('jerseySizes') || ['S', 'M', 'L', 'XL'];
+        this.kitSets = this.load('kitSets') || this.getDefaultKitSets();
+        this.jerseys = this.load('jerseys') || this.getDefaultJerseys();
+        this.matchdays = this.load('matchdays') || [];
+        this.currentMatchdayId = null;
+        this.activeTab = 0;
+        this.showForms = {};
+      }
+
+      save(key, data) { localStorage.setItem(key, JSON.stringify(data)); }
+      load(key) { const d = localStorage.getItem(key); return d ? JSON.parse(d) : null; }
+
+      getDefaultPlayers() {
+        return [
+          { id: '1', firstName: 'Max', lastName: 'Mustermann', jerseyNumber: 1, pantSize: 'M', socksSize: '41-44', jerseySize: 'M', position: 'GK', active: true },
+          { id: '2', firstName: 'Paul', lastName: 'Beispiel', jerseyNumber: 2, pantSize: 'L', socksSize: '45-47', jerseySize: 'L', position: 'DEF', active: true },
+          { id: '3', firstName: 'Lukas', lastName: 'Test', jerseyNumber: 3, pantSize: 'L', socksSize: '45-47', jerseySize: 'L', position: 'DEF', active: true },
+          { id: '4', firstName: 'Jonas', lastName: 'Müller', jerseyNumber: 4, pantSize: 'M', socksSize: '41-44', jerseySize: 'M', position: 'DEF', active: true },
+          { id: '5', firstName: 'Peter', lastName: 'Schmidt', jerseyNumber: 5, pantSize: 'XL', socksSize: '45-47', jerseySize: 'XL', position: 'MID', active: true },
+          { id: '6', firstName: 'Anna', lastName: 'Weber', jerseyNumber: 6, pantSize: 'S', socksSize: '41-44', jerseySize: 'S', position: 'MID', active: true },
+          { id: '7', firstName: 'Thomas', lastName: 'Bauer', jerseyNumber: 7, pantSize: 'L', socksSize: '45-47', jerseySize: 'L', position: 'ATT', active: true },
+          { id: '8', firstName: 'David', lastName: 'Fischer', jerseyNumber: 8, pantSize: 'M', socksSize: '41-44', jerseySize: 'M', position: 'MID', active: true },
+          { id: '9', firstName: 'Christian', lastName: 'Meyer', jerseyNumber: 9, pantSize: 'XL', socksSize: '45-47', jerseySize: 'L', position: 'ATT', active: true },
+          { id: '10', firstName: 'Marcus', lastName: 'Koch', jerseyNumber: 10, pantSize: 'L', socksSize: '45-47', jerseySize: 'L', position: 'ATT', active: true },
+          { id: '11', firstName: 'Stefan', lastName: 'Wagner', jerseyNumber: 11, pantSize: 'M', socksSize: '41-44', jerseySize: 'M', position: 'DEF', active: true },
+        ];
+      }
+
+      getDefaultKitSets() {
+        return [
+          { id: 'k1', name: 'Heimtrikot', description: 'Weiß', active: true },
+          { id: 'k2', name: 'Auswärtstrikot', description: 'Blau', active: true },
+        ];
+      }
+
+      getDefaultJerseys() {
+        const jerseys = [];
+        const sizes = ['M', 'L', 'L', 'M', 'XL', 'S', 'L', 'M', 'L', 'L', 'M'];
+        ['k1', 'k2'].forEach(kitSetId => {
+          for (let i = 1; i <= 11; i++) {
+            jerseys.push({ id: `j-${kitSetId}-${i}`, kitSetId, number: i, size: sizes[i - 1], playerId: i <= 11 ? `${i}` : null });
+          }
+        });
+        return jerseys;
+      }
+
+      getSizeStats() {
+        const activePlayers = this.players.filter(p => p.active);
+        const pantStats = {}, socksStats = {}, jerseyStats = {};
+        activePlayers.forEach(p => {
+          pantStats[p.pantSize] = (pantStats[p.pantSize] || 0) + 1;
+          socksStats[p.socksSize] = (socksStats[p.socksSize] || 0) + 1;
+          jerseyStats[p.jerseySize] = (jerseyStats[p.jerseySize] || 0) + 1;
+        });
+        return { pantStats, socksStats, jerseyStats };
+      }
+
+      addPlayer(player) {
+        this.players.push({ ...player, id: Date.now().toString() });
+        this.save('players', this.players);
+        this.render();
+      }
+
+      deletePlayer(id) {
+        this.players = this.players.filter(p => p.id !== id);
+        this.save('players', this.players);
+        this.render();
+      }
+
+      deactivatePlayer(id) {
+        this.players = this.players.map(p => p.id === id ? { ...p, active: false } : p);
+        this.save('players', this.players);
+        this.render();
+      }
+
+      createMatchday(data) {
+        const matchday = { ...data, id: Date.now().toString(), selectedPlayerIds: [], packingList: [], playerSnapshot: [], jerseySnapshot: [], goals: 0, goalsAgainst: 0, createdAt: new Date().toISOString() };
+        this.matchdays.push(matchday);
+        this.currentMatchdayId = matchday.id;
+        this.save('matchdays', this.matchdays);
+        this.render();
+      }
+
+      updateSelectedPlayers(matchdayId, playerIds) {
+        const matchday = this.matchdays.find(m => m.id === matchdayId);
+        if (!matchday) return;
+        matchday.selectedPlayerIds = playerIds;
+        matchday.playerSnapshot = playerIds.map(id => {
+          const p = this.players.find(pl => pl.id === id);
+          return p ? { playerId: p.id, firstName: p.firstName, lastName: p.lastName, jerseyNumber: p.jerseyNumber, pantSize: p.pantSize, socksSize: p.socksSize, jerseySize: p.jerseySize, position: p.position } : null;
+        }).filter(Boolean);
+        matchday.jerseySnapshot = this.jerseys.filter(j => j.kitSetId === matchday.kitSetId).map(j => ({ jerseyId: j.id, number: j.number, size: j.size, playerId: playerIds.includes(j.playerId || '') ? j.playerId : null }));
+        this.save('matchdays', this.matchdays);
+        this.render();
+      }
+
+      generatePackingList(matchdayId) {
+        const matchday = this.matchdays.find(m => m.id === matchdayId);
+        if (!matchday) return;
+        const packingList = [];
+        matchday.jerseySnapshot.forEach(j => {
+          if (j.playerId) {
+            const player = matchday.playerSnapshot.find(p => p.playerId === j.playerId);
+            if (player) packingList.push({ id: `jersey-${j.jerseyId}`, type: 'JERSEY', label: `#${player.jerseyNumber} – ${player.firstName} ${player.lastName} – ${j.size}`, quantity: 1, checked: false });
+          }
+        });
+        const pantCounts = {};
+        matchday.playerSnapshot.forEach(p => { pantCounts[p.pantSize] = (pantCounts[p.pantSize] || 0) + 1; });
+        Object.entries(pantCounts).forEach(([size, count]) => { packingList.push({ id: `pants-${size}`, type: 'PANTS', label: `Hose ${size}`, quantity: count, checked: false }); });
+        const socksCounts = {};
+        matchday.playerSnapshot.forEach(p => { socksCounts[p.socksSize] = (socksCounts[p.socksSize] || 0) + 1; });
+        Object.entries(socksCounts).forEach(([size, count]) => { packingList.push({ id: `socks-${size}`, type: 'SOCKS', label: `Stutzen ${size}`, quantity: count, checked: false }); });
+        matchday.packingList = packingList;
+        this.save('matchdays', this.matchdays);
+        this.render();
+      }
+
+      togglePackingItem(matchdayId, itemId) {
+        const matchday = this.matchdays.find(m => m.id === matchdayId);
+        if (!matchday) return;
+        const item = matchday.packingList.find(i => i.id === itemId);
+        if (item) { item.checked = !item.checked; this.save('matchdays', this.matchdays); this.render(); }
+      }
+
+      updateMatchdayResult(matchdayId, goals, goalsAgainst) {
+        const matchday = this.matchdays.find(m => m.id === matchdayId);
+        if (matchday) {
+          matchday.goals = parseInt(goals) || 0;
+          matchday.goalsAgainst = parseInt(goalsAgainst) || 0;
+          this.save('matchdays', this.matchdays);
+          this.render();
+        }
+      }
+
+      assignJerseyToPlayer(jerseyId, playerId) {
+        const jersey = this.jerseys.find(j => j.id === jerseyId);
+        if (jersey) { jersey.playerId = playerId || null; this.save('jerseys', this.jerseys); this.render(); }
+      }
+
+      updateJerseySize(jerseyId, size) {
+        const jersey = this.jerseys.find(j => j.id === jerseyId);
+        if (jersey) { jersey.size = size; this.save('jerseys', this.jerseys); this.render(); }
+      }
+
+      deleteJersey(jerseyId) {
+        this.jerseys = this.jerseys.filter(j => j.id !== jerseyId);
+        this.save('jerseys', this.jerseys);
+        this.render();
+      }
+
+      addJersey(kitSetId, number, size) {
+        this.jerseys.push({ id: `j-${kitSetId}-${Date.now()}`, kitSetId, number: parseInt(number), size, playerId: null });
+        this.save('jerseys', this.jerseys);
+        this.render();
+      }
+
+      addPantSize(size) {
+        if (!this.pantSizes.includes(size) && size.trim()) {
+          this.pantSizes.push(size.trim());
+          this.save('pantSizes', this.pantSizes);
+          this.render();
+        }
+      }
+
+      deletePantSize(size) {
+        this.pantSizes = this.pantSizes.filter(s => s !== size);
+        this.save('pantSizes', this.pantSizes);
+        this.render();
+      }
+
+      addSocksSize(size) {
+        if (!this.socksSizes.includes(size) && size.trim()) {
+          this.socksSizes.push(size.trim());
+          this.save('socksSizes', this.socksSizes);
+          this.render();
+        }
+      }
+
+      deleteSocksSize(size) {
+        this.socksSizes = this.socksSizes.filter(s => s !== size);
+        this.save('socksSizes', this.socksSizes);
+        this.render();
+      }
+
+      addJerseySize(size) {
+        if (!this.jerseySizes.includes(size) && size.trim()) {
+          this.jerseySizes.push(size.trim());
+          this.save('jerseySizes', this.jerseySizes);
+          this.render();
+        }
+      }
+
+      deleteJerseySize(size) {
+        this.jerseySizes = this.jerseySizes.filter(s => s !== size);
+        this.save('jerseySizes', this.jerseySizes);
+        this.render();
+      }
+
+      render() {
+        const app = document.getElementById('app');
+        app.innerHTML = this.getHTML();
+      }
+
+      getHTML() {
+        return `<div class="min-h-screen" style="background-color: #f8f9fa;">
+          <div style="background: linear-gradient(135deg, #0f172a 0%, #1e3a8a 100%);" class="text-white sticky top-0 z-10">
+            <div class="max-w-2xl mx-auto px-4 py-5">
+              <h1 class="text-3xl font-bold">⚽ KitManager</h1>
+              <p class="text-blue-100 text-sm">Fußball-Ausrüstungs-Manager</p>
+            </div>
+          </div>
+
+          <div style="background-color: #ffffff; border-bottom: 3px solid #1e3a8a;" class="sticky top-16 z-10">
+            <div class="max-w-2xl mx-auto px-4 flex overflow-x-auto">
+              ${['🏟️ Spieltag', '👥 Spieler', '👕 Ausrüstung', '📊 Statistik', '⚙️ Größen'].map((tab, idx) => `
+                <button onclick="app.setTab(${idx})" style="border-bottom: 4px solid ${this.activeTab === idx ? '#3b82f6' : 'transparent'}; color: ${this.activeTab === idx ? '#1e3a8a' : '#6b7280'}" class="flex-1 py-3 text-center font-medium text-sm transition whitespace-nowrap">
+                  ${tab}
+                </button>
+              `).join('')}
+            </div>
+          </div>
+
+          <div class="max-w-2xl mx-auto px-4 py-6 pb-20">
+            ${this.activeTab === 0 ? this.getMatchdayTab() : this.activeTab === 1 ? this.getPlayersTab() : this.activeTab === 2 ? this.getEquipmentTab() : this.activeTab === 3 ? this.getStatsTab() : this.getSizesTab()}
+          </div>
+        </div>`;
+      }
+
+      getMatchdayTab() {
+        const matchday = this.matchdays.find(m => m.id === this.currentMatchdayId);
+        if (!matchday) {
+          return `<div class="space-y-4">
+            <div class="text-center py-8">
+              <p class="text-gray-600 mb-4">Kein aktiver Spieltag</p>
+              <button onclick="app.showForms.matchday = !app.showForms.matchday; app.render()" style="background-color: #1e3a8a;" class="text-white px-6 py-3 rounded-lg font-medium">+ Neuer Spieltag</button>
+            </div>
+            ${this.matchdays.length > 0 ? `
+              <div style="background-color: #ffffff; border: 1px solid #e5e7eb;" class="rounded-lg p-4">
+                <h3 class="font-bold mb-4" style="color: #0f172a;">📋 Letzte Spieltage</h3>
+                <div class="space-y-2 max-h-64 overflow-y-auto">
+                  ${this.matchdays.slice().reverse().map(m => `
+                    <button onclick="app.currentMatchdayId = '${m.id}'; app.render()" style="background-color: #f9fafb; border: 1px solid #e5e7eb;" class="w-full text-left p-3 rounded-lg hover:border-blue-500 transition">
+                      <p class="font-medium" style="color: #0f172a;">${m.opponent}</p>
+                      <p class="text-xs text-gray-600">${new Date(m.date).toLocaleDateString('de-DE')} · ${m.selectedPlayerIds.length} Spieler ${m.goals !== undefined ? `· ${m.goals}:${m.goalsAgainst}` : ''}</p>
+                    </button>
+                  `).join('')}
+                </div>
+              </div>
+            ` : ''}
+            ${this.showForms.matchday ? `
+              <div style="background-color: #ffffff; border: 2px solid #1e3a8a;" class="rounded-lg p-4 space-y-3">
+                <h3 class="font-bold mb-4" style="color: #0f172a;">Neuer Spieltag</h3>
+                <input type="text" id="opponent" placeholder="Gegner" style="border: 1px solid #1e3a8a;" class="w-full rounded px-3 py-2">
+                <input type="date" id="matchdayDate" style="border: 1px solid #1e3a8a;" class="w-full rounded px-3 py-2">
+                <select id="homeAway" style="border: 1px solid #1e3a8a;" class="w-full rounded px-3 py-2">
+                  <option value="HOME">Heimspiel</option>
+                  <option value="AWAY">Auswärtsspiel</option>
+                </select>
+                <select id="kitSetId" style="border: 1px solid #1e3a8a;" class="w-full rounded px-3 py-2">
+                  <option value="">-- Trikotsatz wählen --</option>
+                  ${this.kitSets.filter(k => k.active).map(k => `<option value="${k.id}">${k.name}</option>`).join('')}
+                </select>
+                <div class="flex gap-2">
+                  <button onclick="app.handleCreateMatchday()" style="background-color: #1e3a8a;" class="text-white px-4 py-2 rounded-lg font-medium flex-1">Erstellen</button>
+                  <button onclick="app.showForms.matchday = false; app.render()" style="background-color: #d1d5db;" class="text-gray-800 px-4 py-2 rounded-lg font-medium flex-1">Abbrechen</button>
+                </div>
+              </div>
+            ` : ''}
+          </div>`;
+        }
+        const allChecked = matchday.packingList.every(item => item.checked);
+        return `<div class="space-y-4">
+          <div style="background-color: #ffffff; border-left: 4px solid #1e3a8a;" class="rounded-lg p-4">
+            <h3 class="font-bold mb-2" style="color: #0f172a;">${matchday.opponent}</h3>
+            <p class="text-sm text-gray-600">${new Date(matchday.date).toLocaleDateString('de-DE')}</p>
+            <p style="color: #1e3a8a;" class="text-sm font-medium mt-2">${matchday.selectedPlayerIds.length} Spieler im Kader</p>
+            <div class="flex gap-2 mt-3">
+              <button onclick="app.currentMatchdayId = null; app.render()" style="background-color: #6b7280;" class="text-white px-3 py-1 rounded text-xs font-medium">← Zurück</button>
+            </div>
+          </div>
+
+          <div style="background-color: #ffffff; border: 1px solid #e5e7eb;" class="rounded-lg p-4">
+            <h3 class="font-bold mb-3" style="color: #0f172a;">Ergebnis</h3>
+            <div class="flex gap-2 items-center">
+              <input type="number" id="goals" value="${matchday.goals}" min="0" style="border: 1px solid #1e3a8a;" class="w-16 rounded px-2 py-2 text-center">
+              <span style="color: #1e3a8a;" class="font-bold">:</span>
+              <input type="number" id="goalsAgainst" value="${matchday.goalsAgainst}" min="0" style="border: 1px solid #1e3a8a;" class="w-16 rounded px-2 py-2 text-center">
+              <button onclick="app.updateMatchdayResult('${matchday.id}', document.getElementById('goals').value, document.getElementById('goalsAgainst').value)" style="background-color: #1e3a8a;" class="text-white px-3 py-2 rounded text-xs font-medium flex-1">Speichern</button>
+            </div>
+          </div>
+
+          <div style="background-color: #ffffff; border: 1px solid #e5e7eb;" class="rounded-lg p-4">
+            <h3 class="font-bold mb-3" style="color: #0f172a;">Kader auswählen</h3>
+            <div class="space-y-2 max-h-48 overflow-y-auto">
+              ${this.players.filter(p => p.active).map(p => `
+                <label class="flex items-center cursor-pointer">
+                  <input type="checkbox" data-player-id="${p.id}" ${matchday.selectedPlayerIds.includes(p.id) ? 'checked' : ''} onchange="app.handlePlayerCheckbox('${matchday.id}')" class="mr-2 w-4 h-4" style="accent-color: #1e3a8a;">
+                  <span class="text-sm">${p.firstName} ${p.lastName}</span>
+                </label>
+              `).join('')}
+            </div>
+          </div>
+
+          ${matchday.packingList.length > 0 ? `
+            <div style="background-color: #ffffff; border: 1px solid #e5e7eb;" class="rounded-lg p-4">
+              <h3 class="font-bold mb-3" style="color: #0f172a;">Packliste</h3>
+              <div class="space-y-2 max-h-48 overflow-y-auto">
+                ${matchday.packingList.map(item => `
+                  <label class="flex items-center cursor-pointer">
+                    <input type="checkbox" ${item.checked ? 'checked' : ''} onchange="app.togglePackingItem('${matchday.id}', '${item.id}')" class="mr-2 w-4 h-4" style="accent-color: #1e3a8a;">
+                    <span class="text-sm flex-1">${item.label} × ${item.quantity}</span>
+                  </label>
+                `).join('')}
+              </div>
+              ${allChecked ? '<p class="text-green-600 font-medium mt-4">✓ Alles gepackt!</p>' : ''}
+            </div>
+          ` : matchday.selectedPlayerIds.length > 0 ? `
+            <button onclick="app.generatePackingList('${matchday.id}')" style="background-color: #1e3a8a;" class="w-full text-white px-4 py-3 rounded-lg font-medium">Packliste erstellen</button>
+          ` : ''}
+        </div>`;
+      }
+
+      handlePlayerCheckbox(matchdayId) {
+        const checkboxes = document.querySelectorAll('input[data-player-id]');
+        const selectedIds = Array.from(checkboxes).filter(cb => cb.checked).map(cb => cb.getAttribute('data-player-id'));
+        this.updateSelectedPlayers(matchdayId, selectedIds);
+      }
+
+      getPlayersTab() {
+        const { pantStats, socksStats, jerseyStats } = this.getSizeStats();
+        return `<div class="space-y-4">
+          <div style="background-color: #1e3a8a;" class="text-white rounded-lg p-4">
+            <h3 class="font-bold mb-3">📏 Verfügbare Größen</h3>
+            <div class="space-y-3">
+              <div>
+                <p class="text-blue-100 text-sm font-medium mb-2">Hosen:</p>
+                <div class="flex flex-wrap gap-2">
+                  ${Object.entries(pantStats).map(([size, count]) => `<span class="bg-white text-gray-900 px-3 py-1 rounded-full text-xs font-medium">${size}: ${count}×</span>`).join('')}
+                </div>
+              </div>
+              <div>
+                <p class="text-blue-100 text-sm font-medium mb-2">Stutzen:</p>
+                <div class="flex flex-wrap gap-2">
+                  ${Object.entries(socksStats).map(([size, count]) => `<span class="bg-white text-gray-900 px-3 py-1 rounded-full text-xs font-medium">${size}: ${count}×</span>`).join('')}
+                </div>
+              </div>
+            </div>
+          </div>
+          ${!this.showForms.player ? `<button onclick="app.showForms.player = true; app.render()" style="background-color: #1e3a8a;" class="w-full text-white px-4 py-2 rounded-lg font-medium">+ Spieler hinzufügen</button>` : ''}
+          ${this.showForms.player ? `
+            <div style="background-color: #ffffff; border: 2px solid #1e3a8a;" class="rounded-lg p-4 space-y-3">
+              <h3 class="font-bold mb-4" style="color: #0f172a;">Neuer Spieler</h3>
+              <input type="text" id="playerFirstName" placeholder="Vorname" style="border: 1px solid #1e3a8a;" class="w-full rounded px-3 py-2">
+              <input type="text" id="playerLastName" placeholder="Nachname" style="border: 1px solid #1e3a8a;" class="w-full rounded px-3 py-2">
+              <input type="number" id="playerNumber" placeholder="Rückennummer" style="border: 1px solid #1e3a8a;" class="w-full rounded px-3 py-2">
+              <select id="playerPantSize" style="border: 1px solid #1e3a8a;" class="w-full rounded px-3 py-2">
+                ${this.pantSizes.map(s => `<option value="${s}">Hosengröße: ${s}</option>`).join('')}
+              </select>
+              <select id="playerSocksSize" style="border: 1px solid #1e3a8a;" class="w-full rounded px-3 py-2">
+                ${this.socksSizes.map(s => `<option value="${s}">Stutzengröße: ${s}</option>`).join('')}
+              </select>
+              <select id="playerJerseySize" style="border: 1px solid #1e3a8a;" class="w-full rounded px-3 py-2">
+                ${this.jerseySizes.map(s => `<option value="${s}">Trikotgröße: ${s}</option>`).join('')}
+              </select>
+              <select id="playerPosition" style="border: 1px solid #1e3a8a;" class="w-full rounded px-3 py-2">
+                <option value="GK">Torwart</option>
+                <option value="DEF">Abwehr</option>
+                <option value="MID" selected>Mittelfeld</option>
+                <option value="ATT">Angriff</option>
+              </select>
+              <div class="flex gap-2">
+                <button onclick="app.handleAddPlayer()" style="background-color: #1e3a8a;" class="text-white px-4 py-2 rounded-lg font-medium flex-1">Hinzufügen</button>
+                <button onclick="app.showForms.player = false; app.render()" style="background-color: #d1d5db;" class="text-gray-800 px-4 py-2 rounded-lg font-medium flex-1">Abbrechen</button>
+              </div>
+            </div>
+          ` : ''}
+          <div class="space-y-3">
+            ${this.players.map(p => `
+              <div style="background-color: #ffffff; border-left: 4px solid ${p.active ? '#1e3a8a' : '#9ca3af'};" class="rounded-lg p-4">
+                <div class="flex justify-between items-start">
+                  <div>
+                    <p class="font-bold" style="color: #0f172a;">${p.firstName} ${p.lastName}</p>
+                    <p class="text-sm text-gray-600">#${p.jerseyNumber || '—'} · ${p.position}</p>
+                    <p class="text-xs text-gray-600 mt-1">Hose: ${p.pantSize} · Stutzen: ${p.socksSize} · Trikot: ${p.jerseySize}</p>
+                    ${!p.active ? '<p class="text-xs text-red-600 font-medium">Inaktiv</p>' : ''}
+                  </div>
+                  <div class="flex gap-2 flex-wrap justify-end">
+                    ${p.active ? `<button onclick="app.deactivatePlayer('${p.id}')" style="background-color: #f59e0b;" class="text-white px-3 py-1 rounded text-xs whitespace-nowrap font-medium">Deaktivieren</button>` : ''}
+                    <button onclick="if(confirm('Spieler wirklich löschen?')) app.deletePlayer('${p.id}')" style="background-color: #ef4444;" class="text-white px-3 py-1 rounded text-xs whitespace-nowrap font-medium">Löschen</button>
+                  </div>
+                </div>
+              </div>
+            `).join('')}
+          </div>
+        </div>`;
+      }
+
+      getEquipmentTab() {
+        return `<div class="space-y-4">
+          ${!this.showForms.kitset ? `<button onclick="app.showForms.kitset = true; app.render()" style="background-color: #1e3a8a;" class="w-full text-white px-4 py-2 rounded-lg font-medium">+ Trikotsatz hinzufügen</button>` : ''}
+          ${this.showForms.kitset ? `
+            <div style="background-color: #ffffff; border: 2px solid #1e3a8a;" class="rounded-lg p-4 space-y-3">
+              <h3 class="font-bold mb-4" style="color: #0f172a;">Neuer Trikotsatz</h3>
+              <input type="text" id="kitsetName" placeholder="Name" style="border: 1px solid #1e3a8a;" class="w-full rounded px-3 py-2">
+              <input type="text" id="kitsetDesc" placeholder="Beschreibung" style="border: 1px solid #1e3a8a;" class="w-full rounded px-3 py-2">
+              <div class="flex gap-2">
+                <button onclick="app.handleAddKitSet()" style="background-color: #1e3a8a;" class="text-white px-4 py-2 rounded-lg font-medium flex-1">Hinzufügen</button>
+                <button onclick="app.showForms.kitset = false; app.render()" style="background-color: #d1d5db;" class="text-gray-800 px-4 py-2 rounded-lg font-medium flex-1">Abbrechen</button>
+              </div>
+            </div>
+          ` : ''}
+          ${this.kitSets.map(kit => `
+            <div>
+              <h3 class="font-bold my-4" style="color: #0f172a;">${kit.name}</h3>
+              <div class="space-y-3">
+                ${this.jerseys.filter(j => j.kitSetId === kit.id).map(jersey => {
+                  const assignedPlayer = this.players.find(p => p.id === jersey.playerId);
+                  return `
+                    <div style="background-color: #ffffff; border: 1px solid #e5e7eb;" class="rounded-lg p-4">
+                      <div class="flex justify-between items-start gap-2">
+                        <div>
+                          <p class="font-medium" style="color: #0f172a;">#${jersey.number}</p>
+                          <p class="text-sm text-gray-600">${assignedPlayer ? assignedPlayer.firstName + ' ' + assignedPlayer.lastName : 'Frei'}</p>
+                        </div>
+                        <div class="flex gap-2">
+                          <select onchange="app.updateJerseySize('${jersey.id}', this.value)" style="border: 1px solid #1e3a8a;" class="rounded px-2 py-1 text-sm">
+                            ${this.jerseySizes.map(s => `<option value="${s}" ${jersey.size === s ? 'selected' : ''}>${s}</option>`).join('')}
+                          </select>
+                          <select onchange="app.assignJerseyToPlayer('${jersey.id}', this.value)" style="border: 1px solid #1e3a8a;" class="rounded px-2 py-1 text-sm">
+                            <option value="">Frei</option>
+                            ${this.players.map(p => `<option value="${p.id}" ${jersey.playerId === p.id ? 'selected' : ''}>${p.firstName} ${p.lastName}</option>`).join('')}
+                          </select>
+                          <button onclick="if(confirm('Trikot wirklich löschen?')) app.deleteJersey('${jersey.id}')" style="background-color: #ef4444;" class="text-white px-2 py-1 rounded text-xs font-medium">✕</button>
+                        </div>
+                      </div>
+                    </div>
+                  `;
+                }).join('')}
+              </div>
+              ${!this.showForms['jersey-' + kit.id] ? `
+                <button onclick="app.showForms['jersey-${kit.id}'] = true; app.render()" style="background-color: #1e3a8a;" class="w-full text-white px-4 py-2 rounded-lg font-medium mt-3">+ Trikot hinzufügen</button>
+              ` : ''}
+              ${this.showForms['jersey-' + kit.id] ? `
+                <div style="background-color: #ffffff; border: 2px solid #1e3a8a;" class="rounded-lg p-3 space-y-2 mt-3">
+                  <input type="number" id="jerseyNum-${kit.id}" placeholder="Nummer" style="border: 1px solid #1e3a8a;" class="w-full rounded px-3 py-2">
+                  <select id="jerseySize-${kit.id}" style="border: 1px solid #1e3a8a;" class="w-full rounded px-3 py-2">
+                    ${this.jerseySizes.map(s => `<option value="${s}">${s}</option>`).join('')}
+                  </select>
+                  <div class="flex gap-2">
+                    <button onclick="app.handleAddJersey('${kit.id}')" style="background-color: #1e3a8a;" class="text-white px-4 py-2 rounded-lg font-medium flex-1">Hinzufügen</button>
+                    <button onclick="app.showForms['jersey-${kit.id}'] = false; app.render()" style="background-color: #d1d5db;" class="text-gray-800 px-4 py-2 rounded-lg font-medium flex-1">Abbrechen</button>
+                  </div>
+                </div>
+              ` : ''}
+            </div>
+          `).join('')}
+        </div>`;
+      }
+
+      getStatsTab() {
+        const stats = this.players.filter(p => p.active).map(p => { const appearances = this.matchdays.filter(m => m.selectedPlayerIds.includes(p.id)).length; return { player: p, appearances, total: this.matchdays.length, percentage: this.matchdays.length > 0 ? Math.round((appearances / this.matchdays.length) * 100) : 0 }; }).sort((a, b) => b.percentage - a.percentage);
+        return `<div class="space-y-4"><div class="overflow-x-auto"><div style="background-color: #ffffff; border: 1px solid #e5e7eb;" class="rounded-lg"><table class="w-full text-sm"><thead><tr style="background-color: #1e3a8a;" class="text-white"><th class="text-left py-3 px-3 font-medium">Spieler</th><th class="text-right py-3 px-3 font-medium">Einsätze</th><th class="text-right py-3 px-3 font-medium">Quote</th></tr></thead><tbody>${stats.map((s, idx) => `<tr style="border-bottom: 1px solid #e5e7eb; ${idx % 2 === 1 ? 'background-color: #f9fafb;' : ''}"><td class="py-3 px-3">${s.player.firstName} ${s.player.lastName}</td><td class="text-right py-3 px-3">${s.appearances}</td><td class="text-right py-3 px-3 font-medium" style="color: #1e3a8a;">${s.percentage}%</td></tr>`).join('')}</tbody></table></div></div><p class="text-xs text-gray-600 text-center">Insgesamt ${this.matchdays.length} Spieltage</p></div>`;
+      }
+
+      getSizesTab() {
+        return `<div class="space-y-6">
+          <div>
+            <h3 class="font-bold mb-4" style="color: #0f172a;">📋 Hosengröße verwalten</h3>
+            <div class="space-y-2 mb-4">
+              ${this.pantSizes.map(size => `
+                <div style="background-color: #ffffff; border: 1px solid #e5e7eb;" class="rounded-lg p-3 flex justify-between items-center">
+                  <span class="font-medium" style="color: #0f172a;">${size}</span>
+                  <button onclick="if(confirm('Größe wirklich löschen?')) app.deletePantSize('${size}')" style="background-color: #ef4444;" class="text-white px-3 py-1 rounded text-xs font-medium">Löschen</button>
+                </div>
+              `).join('')}
+            </div>
+            ${!this.showForms.pantSize ? `
+              <button onclick="app.showForms.pantSize = true; app.render()" style="background-color: #1e3a8a;" class="w-full text-white px-4 py-2 rounded-lg font-medium">+ Neue Hosengröße</button>
+            ` : `
+              <div style="background-color: #ffffff; border: 2px solid #1e3a8a;" class="rounded-lg p-4 space-y-2">
+                <input type="text" id="newPantSize" placeholder="z.B. XL" style="border: 1px solid #1e3a8a;" class="w-full rounded px-3 py-2">
+                <div class="flex gap-2">
+                  <button onclick="app.addPantSize(document.getElementById('newPantSize').value); app.showForms.pantSize = false;" style="background-color: #1e3a8a;" class="text-white px-4 py-2 rounded-lg font-medium flex-1">Hinzufügen</button>
+                  <button onclick="app.showForms.pantSize = false; app.render()" style="background-color: #d1d5db;" class="text-gray-800 px-4 py-2 rounded-lg font-medium flex-1">Abbrechen</button>
+                </div>
+              </div>
+            `}
+          </div>
+
+          <div style="border-top: 2px solid #1e3a8a;" class="pt-6">
+            <h3 class="font-bold mb-4" style="color: #0f172a;">🧦 Stutzengröße verwalten</h3>
+            <div class="space-y-2 mb-4">
+              ${this.socksSizes.map(size => `
+                <div style="background-color: #ffffff; border: 1px solid #e5e7eb;" class="rounded-lg p-3 flex justify-between items-center">
+                  <span class="font-medium" style="color: #0f172a;">${size}</span>
+                  <button onclick="if(confirm('Größe wirklich löschen?')) app.deleteSocksSize('${size}')" style="background-color: #ef4444;" class="text-white px-3 py-1 rounded text-xs font-medium">Löschen</button>
+                </div>
+              `).join('')}
+            </div>
+            ${!this.showForms.socksSize ? `
+              <button onclick="app.showForms.socksSize = true; app.render()" style="background-color: #1e3a8a;" class="w-full text-white px-4 py-2 rounded-lg font-medium">+ Neue Stutzengröße</button>
+            ` : `
+              <div style="background-color: #ffffff; border: 2px solid #1e3a8a;" class="rounded-lg p-4 space-y-2">
+                <input type="text" id="newSocksSize" placeholder="z.B. 45-47" style="border: 1px solid #1e3a8a;" class="w-full rounded px-3 py-2">
+                <div class="flex gap-2">
+                  <button onclick="app.addSocksSize(document.getElementById('newSocksSize').value); app.showForms.socksSize = false;" style="background-color: #1e3a8a;" class="text-white px-4 py-2 rounded-lg font-medium flex-1">Hinzufügen</button>
+                  <button onclick="app.showForms.socksSize = false; app.render()" style="background-color: #d1d5db;" class="text-gray-800 px-4 py-2 rounded-lg font-medium flex-1">Abbrechen</button>
+                </div>
+              </div>
+            `}
+          </div>
+
+          <div style="border-top: 2px solid #1e3a8a;" class="pt-6">
+            <h3 class="font-bold mb-4" style="color: #0f172a;">👕 Trikotgröße verwalten</h3>
+            <div class="space-y-2 mb-4">
+              ${this.jerseySizes.map(size => `
+                <div style="background-color: #ffffff; border: 1px solid #e5e7eb;" class="rounded-lg p-3 flex justify-between items-center">
+                  <span class="font-medium" style="color: #0f172a;">${size}</span>
+                  <button onclick="if(confirm('Größe wirklich löschen?')) app.deleteJerseySize('${size}')" style="background-color: #ef4444;" class="text-white px-3 py-1 rounded text-xs font-medium">Löschen</button>
+                </div>
+              `).join('')}
+            </div>
+            ${!this.showForms.jerseySize ? `
+              <button onclick="app.showForms.jerseySize = true; app.render()" style="background-color: #1e3a8a;" class="w-full text-white px-4 py-2 rounded-lg font-medium">+ Neue Trikotgröße</button>
+            ` : `
+              <div style="background-color: #ffffff; border: 2px solid #1e3a8a;" class="rounded-lg p-4 space-y-2">
+                <input type="text" id="newJerseySize" placeholder="z.B. XXL" style="border: 1px solid #1e3a8a;" class="w-full rounded px-3 py-2">
+                <div class="flex gap-2">
+                  <button onclick="app.addJerseySize(document.getElementById('newJerseySize').value); app.showForms.jerseySize = false;" style="background-color: #1e3a8a;" class="text-white px-4 py-2 rounded-lg font-medium flex-1">Hinzufügen</button>
+                  <button onclick="app.showForms.jerseySize = false; app.render()" style="background-color: #d1d5db;" class="text-gray-800 px-4 py-2 rounded-lg font-medium flex-1">Abbrechen</button>
+                </div>
+              </div>
+            `}
+          </div>
+        </div>`;
+      }
+
+      setTab(idx) { this.activeTab = idx; this.render(); }
+      handleCreateMatchday() { const opponent = document.getElementById('opponent').value; const date = document.getElementById('matchdayDate').value; const homeAway = document.getElementById('homeAway').value; const kitSetId = document.getElementById('kitSetId').value; if (!opponent || !date || !kitSetId) { alert('Bitte alle Felder ausfüllen'); return; } this.createMatchday({ opponent, date: new Date(date), homeAway, kitSetId }); this.showForms.matchday = false; }
+      handleAddPlayer() { const firstName = document.getElementById('playerFirstName').value; const lastName = document.getElementById('playerLastName').value; const jerseyNumber = document.getElementById('playerNumber').value; const pantSize = document.getElementById('playerPantSize').value; const socksSize = document.getElementById('playerSocksSize').value; const jerseySize = document.getElementById('playerJerseySize').value; const position = document.getElementById('playerPosition').value; if (!firstName || !lastName) { alert('Vorname und Nachname erforderlich'); return; } this.addPlayer({ firstName, lastName, jerseyNumber: jerseyNumber ? parseInt(jerseyNumber) : null, pantSize, socksSize, jerseySize, position, active: true }); this.showForms.player = false; }
+      handleAddKitSet() { const name = document.getElementById('kitsetName').value; const description = document.getElementById('kitsetDesc').value; if (!name) { alert('Name erforderlich'); return; } this.kitSets.push({ id: Date.now().toString(), name, description, active: true }); this.save('kitSets', this.kitSets); this.showForms.kitset = false; this.render(); }
+      handleAddJersey(kitSetId) { const number = document.getElementById(`jerseyNum-${kitSetId}`).value; const size = document.getElementById(`jerseySize-${kitSetId}`).value; if (!number) { alert('Nummer erforderlich'); return; } this.addJersey(kitSetId, number, size); this.showForms[`jersey-${kitSetId}`] = false; }
+    }
+
+    const app = new KitManager();
+    app.render();
+  </script>
+</body>
+</html>
